@@ -8,6 +8,7 @@ import os
 import torch
 import numpy as np
 import queue
+import logging
 
 def pytorch_cos_sim(a: Tensor, b: Tensor):
     """
@@ -15,6 +16,12 @@ def pytorch_cos_sim(a: Tensor, b: Tensor):
     This function can be used as a faster replacement for 1-scipy.spatial.distance.cdist(a,b)
     :return: Matrix with res[i][j]  = cos_sim(a[i], b[j])
     """
+    if not isinstance(a, torch.Tensor):
+        a = torch.tensor(a)
+
+    if not isinstance(b, torch.Tensor):
+        b = torch.tensor(b)
+
     if len(a.shape) == 1:
         a = a.unsqueeze(0)
 
@@ -66,22 +73,23 @@ def paraphrase_mining(model,
         for query_start_idx in range(0, len(embeddings), query_chunk_size):
             query_end_idx = min(query_start_idx + query_chunk_size, len(embeddings))
 
-            # logging.info("Compute cosine similarities")
+            #logging.info("Compute cosine similarities")
             cos_scores = pytorch_cos_sim(embeddings[query_start_idx:query_end_idx],
-                                         embeddings[corpus_start_idx:corpus_end_idx]).cpu().numpy()
-            cos_scores = np.nan_to_num(cos_scores)
+                                         embeddings[corpus_start_idx:corpus_end_idx]).cpu()
 
-            # logging.info("Sort scores")
-            cos_score_argpartition = np.argpartition(-cos_scores, min(len(cos_scores)-1, top_k))
 
-            # logging.info("Find most similar pairs out of {} queries".format(len(cos_scores)))
+            cos_scores_top_k_values, cos_scores_top_k_idx = torch.topk(cos_scores, min(top_k, len(cos_scores[0])-1), dim=1, largest=True, sorted=False)
+            cos_scores_top_k_values = cos_scores_top_k_values.tolist()
+            cos_scores_top_k_idx = cos_scores_top_k_idx.tolist()
+
+            #logging.info("Find most similar pairs out of {} queries".format(len(cos_scores)))
             for query_itr in range(len(cos_scores)):
-                for corpus_itr in cos_score_argpartition[query_itr][0:top_k]:
+                for top_k_idx, corpus_itr in enumerate(cos_scores_top_k_idx[query_itr]):
                     i = query_start_idx + query_itr
                     j = corpus_start_idx + corpus_itr
 
-                    if i != j and cos_scores[query_itr][corpus_itr] > min_score:
-                        pairs.put((cos_scores[query_itr][corpus_itr], i, j))
+                    if i != j and cos_scores_top_k_values[query_itr][top_k_idx] > min_score:
+                        pairs.put((cos_scores_top_k_values[query_itr][top_k_idx], i, j))
                         num_added += 1
 
                         if num_added >= max_pairs:
@@ -178,6 +186,9 @@ def http_get(url, path):
     """
     Downloads a URL to a given path on disc
     """
+    if os.path.dirname(path) != '':
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+
     req = requests.get(url, stream=True)
     if req.status_code != 200:
         print("Exception when trying to download {}. Response {}".format(url, req.status_code), file=sys.stderr)
